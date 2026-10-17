@@ -24,15 +24,22 @@ const connectToMongoDB = async () => {
         const database = client.db('IdeaVault');
         const ideasCollection = database.collection('ideas');
 
+        app.get('/', async (req, res) => {
+            const cursor = ideasCollection.find({}).sort({ votes: -1 }).limit(6);
+            const result = await cursor.toArray();
+
+            res.send(result);
+        });
+
         app.get('/ideas', async (req, res) => {
             const cursor = ideasCollection.find({});
             const result = await cursor.toArray();
 
             res.send(result);
-        })
-        
+        });
+
         return client;
-        
+
     } catch (error) {
         console.dir(error);
     }
@@ -43,10 +50,6 @@ connectToMongoDB();
 const disconnectFromMongoDB = async () => {
     await client.close();
 };
-
-app.get('/', (req, res) => {
-    res.send('IdeaVault server is running!');
-});
 
 
 app.listen(port, () => {
