@@ -18,7 +18,7 @@ const client = new MongoClient(mongoConnectionURI);
 
 const connectToMongoDB = async () => {
     try {
-        await client.connect();
+        // await client.connect();
         console.log('You successfully connected to MongoDB');
 
         const database = client.db('IdeaVault');
