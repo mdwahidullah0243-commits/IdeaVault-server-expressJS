@@ -1,7 +1,7 @@
 const express = require('express');
 const dotenv = require('dotenv');
 const cors = require('cors');
-const { MongoClient } = require('mongodb');
+const { MongoClient, ObjectId } = require('mongodb');
 dotenv.config();
 
 const app = express();
@@ -18,7 +18,7 @@ const client = new MongoClient(mongoConnectionURI);
 
 const connectToMongoDB = async () => {
     try {
-        // await client.connect();
+        await client.connect();
         console.log('You successfully connected to MongoDB');
 
         const database = client.db('IdeaVault');
@@ -34,6 +34,17 @@ const connectToMongoDB = async () => {
         app.get('/ideas', async (req, res) => {
             const cursor = ideasCollection.find({});
             const result = await cursor.toArray();
+
+            res.send(result);
+        });
+
+        app.get('/idea-details/:ideaId', async (req, res) => {
+            const { ideaId } = req.params;
+            const query = {
+                _id: new ObjectId(ideaId)
+            };
+            
+            const result = await ideasCollection.findOne(query);
 
             res.send(result);
         });
