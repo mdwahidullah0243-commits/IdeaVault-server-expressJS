@@ -24,6 +24,7 @@ const connectToMongoDB = async () => {
         const database = client.db('IdeaVault');
         const ideasCollection = database.collection('ideas');
 
+        // GET request
         app.get('/', async (req, res) => {
             const cursor = ideasCollection.find({}).sort({ votes: -1 }).limit(6);
             const result = await cursor.toArray();
@@ -45,6 +46,14 @@ const connectToMongoDB = async () => {
             };
             
             const result = await ideasCollection.findOne(query);
+
+            res.send(result);
+        });
+
+        // POST request
+        app.post('/add-idea', async (req, res) => {
+            const ideaData = await req.body;
+            const result = await ideasCollection.insertOne(ideaData);
 
             res.send(result);
         });
