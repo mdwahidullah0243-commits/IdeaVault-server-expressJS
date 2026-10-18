@@ -44,8 +44,20 @@ const connectToMongoDB = async () => {
             const query = {
                 _id: new ObjectId(ideaId)
             };
-            
+
             const result = await ideasCollection.findOne(query);
+
+            res.send(result);
+        });
+
+        app.get('/my-ideas/:userId', async (req, res) => {
+            const { userId } = req.params;
+            const query = {
+                userId
+            };
+
+            const cursor = ideasCollection.find(query);
+            const result = await cursor.toArray();
 
             res.send(result);
         });
