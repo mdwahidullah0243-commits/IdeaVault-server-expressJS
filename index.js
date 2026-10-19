@@ -32,11 +32,52 @@ const connectToMongoDB = async () => {
             res.send(result);
         });
 
-        app.get('/ideas', async (req, res) => {
-            const cursor = ideasCollection.find({});
-            const result = await cursor.toArray();
+        app.get('/ideas/idea-category/:name', async (req, res) => {
+            const { name } = req.params;
 
-            res.send(result);
+            if (name === 'All') {
+                const cursor = ideasCollection.find({});
+                const result = await cursor.toArray();
+
+                res.send(result);
+
+            } else {
+                const query = {
+                    category: name
+                };
+
+                const cursor = ideasCollection.find(query);
+                const result = await cursor.toArray();
+
+                res.send(result);
+            }
+        });
+
+        app.get('/ideas/sort/:sortingItem', async (req, res) => {
+            const { sortingItem } = req.params;
+
+            if (sortingItem === 'Newest') {
+                const cursor = ideasCollection.find({});
+                const allDoc = await cursor.toArray();
+
+                const result = allDoc.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+                res.send(result);
+
+            } else if (sortingItem === 'Oldest') {
+                const cursor = ideasCollection.find({});
+                const allDoc = await cursor.toArray();
+
+                const result = allDoc.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+                res.send(result);
+
+            } else {
+                const cursor = ideasCollection.find({}).sort({ votes: -1 });
+                const result = await cursor.toArray();
+
+                res.send(result);
+            }
         });
 
         app.get('/idea-details/:ideaId', async (req, res) => {
