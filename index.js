@@ -71,12 +71,11 @@ const connectToMongoDB = async () => {
             res.send(result);
         });
 
-        
+
         // UPDATE request
         app.patch('/my-ideas/:ideaId', async (req, res) => {
             const { ideaId } = req.params;
             const modifiedIdeaInfo = await req.body;
-            console.log('modifiedIdeaInfo:', modifiedIdeaInfo);
 
             const filter = {
                 _id: new ObjectId(ideaId)
@@ -89,6 +88,20 @@ const connectToMongoDB = async () => {
             };
 
             const result = await ideasCollection.updateOne(filter, updateDoc);
+
+            res.send(result);
+        });
+
+
+        // DELETE request
+        app.delete('/my-ideas/:ideaId', async (req, res) => {
+            const { ideaId } = req.params;
+
+            const filter = {
+                _id: new ObjectId(ideaId)
+            };
+
+            const result = await ideasCollection.deleteOne(filter);
 
             res.send(result);
         });
