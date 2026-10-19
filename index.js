@@ -80,6 +80,24 @@ const connectToMongoDB = async () => {
             }
         });
 
+        app.get("/ideas/search", async (req, res) => {
+            const { search = "" } = req.query;
+
+            const escapeRegex = (value) =>
+                value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+            const query = {
+                title: {
+                    $regex: escapeRegex(search.trim()),
+                    $options: "i"
+                }
+            };
+
+            const result = await ideasCollection.find(query).toArray();
+
+            res.send(result);
+        });
+
         app.get('/idea-details/:ideaId', async (req, res) => {
             const { ideaId } = req.params;
             const query = {
