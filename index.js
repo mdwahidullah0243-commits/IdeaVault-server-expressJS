@@ -23,6 +23,7 @@ const connectToMongoDB = async () => {
 
         const database = client.db('IdeaVault');
         const ideasCollection = database.collection('ideas');
+        const votesCollection = database.collection('votes');
 
         // GET request
         app.get('/', async (req, res) => {
@@ -149,6 +150,119 @@ const connectToMongoDB = async () => {
             const result = await ideasCollection.updateOne(filter, updateDoc);
 
             res.send(result);
+        });
+
+        app.patch("/idea-details/:detailsId", async (req, res) => {
+            const { detailsId } = req.params;
+            const votesInfo = await req.body;
+            const { isLiked, userId, title, shortDesc } = votesInfo;
+
+            if (!ObjectId.isValid(detailsId)) {
+                return res.status(400).json({
+                    message: "Invalid idea ID"
+                });
+            };
+
+            if (!userId) {
+                return res.status(401).json({
+                    message: "Unauthorized"
+                });
+            };
+
+            if (typeof isLiked !== "boolean") {
+                return res.status(400).json({
+                    message: "isLiked must be a boolean"
+                });
+            };
+
+            const ideaId = new ObjectId(detailsId);
+            const session = client.startSession();
+
+            try {
+                const result = await session.withTransaction(async () => {
+                    const idea = await ideasCollection.findOne(
+                        { _id: ideaId },
+                        { session }
+                    );
+
+                    if (!idea) {
+                        throw new Error("IDEA_NOT_FOUND");
+                    };
+
+                    const voteQuery = { ideaId, userId };
+
+                    if (isLiked) {
+                        // Insert only if this user hasn't voted
+                        const insertResult = await votesCollection.updateOne(
+                            voteQuery,
+                            {
+                                $setOnInsert: {
+                                    ideaId,
+                                    userId,
+                                    title,
+                                    shortDesc,
+                                    createdAt: new Date()
+                                }
+                            },
+                            { upsert: true, session }
+                        );
+
+                        if (insertResult.upsertedCount === 1) {
+                            await ideasCollection.updateOne(
+                                { _id: ideaId },
+                                { $inc: { votes: 1 } },
+                                { session }
+                            );
+                        }
+
+                    } else {
+                        // Delete existing vote
+                        const deleteResult = await votesCollection.deleteOne(
+                            voteQuery,
+                            { session }
+                        );
+
+                        if (deleteResult.deletedCount === 1) {
+                            await ideasCollection.updateOne(
+                                { _id: ideaId },
+                                { $inc: { votes: -1 } },
+                                { session }
+                            );
+                        };
+                    };
+
+                    const updatedIdea = await ideasCollection.findOne(
+                        { _id: ideaId },
+                        { session }
+                    );
+
+                    return {
+                        votes: updatedIdea.votes,
+                        isLiked
+                    };
+                });
+
+                res.status(200).json({
+                    message: "Idea published successfully",
+                    ...result
+                });
+
+            } catch (error) {
+                console.error(error);
+
+                if (error.message === "IDEA_NOT_FOUND") {
+                    return res.status(404).json({
+                        message: "Idea not found"
+                    });
+                }
+
+                res.status(500).json({
+                    message: "Failed to publish idea"
+                });
+
+            } finally {
+                await session.endSession();
+            }
         });
 
 
