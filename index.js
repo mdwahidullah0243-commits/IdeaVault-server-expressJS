@@ -2,6 +2,7 @@ const express = require('express');
 const dotenv = require('dotenv');
 const cors = require('cors');
 const { MongoClient, ObjectId } = require('mongodb');
+const { createRemoteJWKSet, jwtVerify } = require('jose-cjs');
 dotenv.config();
 
 const app = express();
@@ -10,6 +11,35 @@ const port = 8000;
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+
+const verifyToken = async (req, res, next) => {
+    const authHeaders = req.headers.authorization;
+
+    if (!authHeaders) {
+        res.status(401).json({ message: 'Unauthorized' });
+    };
+
+    const token = authHeaders.split(' ')[1];
+
+    if (!token) {
+        res.status(401).json({ message: 'Unauthorized' });
+    };
+
+    try {
+        const JWKS = createRemoteJWKSet(
+            new URL(`${process.env.NEXT_PUBLIC_CLIENT_URL}/api/auth/jwks`)
+        );
+
+        const { payload } = await jwtVerify(token, JWKS);
+        console.log('payload:', payload);
+
+        next();
+
+    } catch (error) {
+        return res.status(403).json({ message: 'Token validation failed' });
+    };
+};
 
 
 // Database-এ comments flat structure-এ আছে, কিন্তু frontend-এ আমার nested structure প্রয়োজন।
@@ -57,6 +87,8 @@ const connectToMongoDB = async () => {
         await client.connect();
         console.log('You successfully connected to MongoDB');
 
+        // Collections
+
         const database = client.db('IdeaVault');
         const ideasCollection = database.collection('ideas');
         const votesOnIdeaCollection = database.collection('votes-on-idea');
@@ -67,6 +99,7 @@ const connectToMongoDB = async () => {
         // API Routes
 
         // GET request
+
         app.get('/', async (req, res) => {
             const cursor = ideasCollection.find({}).sort({ votes: -1 }).limit(6);
             const result = await cursor.toArray();
@@ -140,7 +173,7 @@ const connectToMongoDB = async () => {
             res.send(result);
         });
 
-        app.get('/idea-details/:ideaId', async (req, res) => {
+        app.get('/idea-details/:ideaId', verifyToken, async (req, res) => {
             const { ideaId } = req.params;
             const query = {
                 _id: new ObjectId(ideaId)
@@ -168,7 +201,7 @@ const connectToMongoDB = async () => {
             };
         });
 
-        app.get('/my-ideas/:userId', async (req, res) => {
+        app.get('/my-ideas/:userId', verifyToken, async (req, res) => {
             const { userId } = req.params;
             const query = {
                 userId
@@ -207,7 +240,7 @@ const connectToMongoDB = async () => {
             }
         });
 
-        app.get('/my-interactions/comments/:userId', async (req, res) => {
+        app.get('/my-interactions/comments/:userId', verifyToken, async (req, res) => {
             const { userId } = req.params;
 
             const cursor = commentsCollection.find({ userId });
@@ -216,7 +249,7 @@ const connectToMongoDB = async () => {
             res.send(result);
         });
 
-        app.get('/my-interactions/likes/:userId', async (req, res) => {
+        app.get('/my-interactions/likes/:userId', verifyToken, async (req, res) => {
             const { userId } = req.params;
 
             const coll_1 = await votesOnCommentCollection.find({ userId }).toArray();
@@ -229,7 +262,7 @@ const connectToMongoDB = async () => {
 
 
         // POST request
-        app.post('/add-idea', async (req, res) => {
+        app.post('/add-idea', verifyToken, async (req, res) => {
             const ideaData = await req.body;
             const result = await ideasCollection.insertOne(ideaData);
 
@@ -237,7 +270,7 @@ const connectToMongoDB = async () => {
         });
 
         // Create a comment
-        app.post("/ideas/:ideaId/comments/:userId", async (req, res) => {
+        app.post("/ideas/:ideaId/comments/:userId", verifyToken, async (req, res) => {
             try {
                 const { ideaId, userId } = req.params;
                 const { text, user, avatar, title } = await req.body;
@@ -668,8 +701,8 @@ const connectToMongoDB = async () => {
 
         app.patch('/profile/edit/:userId', async (req, res) => {
             const { userId } = req.params;
-            const {name, image} = await req.body;
-            console.log({name, image})
+            const { name, image } = await req.body;
+            console.log({ name, image })
 
             const filter = {
                 _id: new ObjectId(userId)
