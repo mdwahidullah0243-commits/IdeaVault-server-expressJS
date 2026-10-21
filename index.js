@@ -11,6 +11,42 @@ const port = 8000;
 app.use(cors());
 app.use(express.json());
 
+
+// Database-এ comments flat structure-এ আছে, কিন্তু frontend-এ আমার nested structure প্রয়োজন।
+// সেজন্য প্রথমে সব comments fetch করে JavaScript দিয়ে tree তৈরি করে নিচ্ছি।
+
+const buildCommentTree = (comments) => {
+    const commentMap = new Map();
+    const roots = [];
+
+    // Step 1: Create lookup map
+    comments.forEach((comment) => {
+        commentMap.set(comment._id.toString(), {
+            ...comment,
+            replies: []
+        });
+    });
+
+    // Step 2: Build parent-child relationships
+    comments.forEach((comment) => {
+        const current = commentMap.get(comment._id.toString());
+
+        if (comment.parentId) {
+            const parent = commentMap.get(
+                comment.parentId.toString()
+            );
+
+            if (parent) {
+                parent.replies.push(current);
+            }
+        } else {
+            roots.push(current);
+        }
+    });
+
+    return roots;
+};
+
 // Database Connection String
 const mongoConnectionURI = `mongodb+srv://${process.env.DB_USERNAME}:${process.env.DB_PASSWORD}@cluster0.cjigwjn.mongodb.net/`
 
@@ -18,12 +54,29 @@ const client = new MongoClient(mongoConnectionURI);
 
 const connectToMongoDB = async () => {
     try {
-        await client.connect();
+        // await client.connect();
         console.log('You successfully connected to MongoDB');
 
         const database = client.db('IdeaVault');
         const ideasCollection = database.collection('ideas');
-        const votesCollection = database.collection('votes');
+        const votesOnIdeaCollection = database.collection('votes-on-idea');
+        const commentsCollection = database.collection('comments');
+        const votesOnCommentCollection = database.collection('votes-on-comment');
+
+        // Create indexes
+        await commentsCollection.createIndex({
+            ideaId: 1,
+            createdAt: 1,
+            _id: 1
+        });
+
+        await commentsCollection.createIndex({
+            parentId: 1
+        });
+
+        console.log("MongoDB indexes created successfully");
+
+        // API Routes
 
         // GET request
         app.get('/', async (req, res) => {
@@ -110,6 +163,41 @@ const connectToMongoDB = async () => {
             res.send(result);
         });
 
+        app.get('/idea-details/:ideaId/votes/:userId', async (req, res) => {
+            const { ideaId, userId } = req.params;
+
+            const query = {
+                ideaId: new ObjectId(ideaId),
+                userId
+            };
+
+            const result = await votesOnIdeaCollection.findOne(query);
+
+            if (result) {
+                res.status(200).json({ message: true });
+            } else {
+                res.status(404).json({ message: false });
+            };
+        });
+
+        app.get('/idea/:detailsId/comment/:commentId/liked/:userId', async (req, res) => {
+            const { detailsId, userId, commentId } = req.params;
+
+            const query = {
+                ideaId: new ObjectId(detailsId),
+                commentId: new ObjectId(commentId),
+                userId
+            };
+
+            const result = await votesOnCommentCollection.findOne(query);
+
+            if (result) {
+                res.status(200).json({ message: true });
+            } else {
+                res.status(404).json({ message: false });
+            };
+        })
+
         app.get('/my-ideas/:userId', async (req, res) => {
             const { userId } = req.params;
             const query = {
@@ -122,6 +210,33 @@ const connectToMongoDB = async () => {
             res.send(result);
         });
 
+        // GET API — Nested Comments Return করা
+        app.get("/ideas/:ideaId/comments", async (req, res) => {
+            try {
+                const { ideaId } = req.params;
+
+                if (!ObjectId.isValid(ideaId)) {
+                    return res.status(400).json({
+                        message: "Invalid idea ID"
+                    });
+                }
+
+                const comments = await commentsCollection
+                    .find({ ideaId: new ObjectId(ideaId) })
+                    .sort({ createdAt: -1, _id: -1 })
+                    .toArray();
+
+                const nestedComments = buildCommentTree(comments);
+
+                res.status(200).json(nestedComments);
+
+            } catch (error) {
+                res.status(500).json({
+                    message: "Failed to fetch comments"
+                });
+            }
+        });
+
 
         // POST request
         app.post('/add-idea', async (req, res) => {
@@ -131,8 +246,140 @@ const connectToMongoDB = async () => {
             res.send(result);
         });
 
+        // Create a comment
+        app.post("/ideas/:ideaId/comments/:userId", async (req, res) => {
+            try {
+                const { ideaId, userId } = req.params;
+                const { text, user, avatar } = await req.body;
+
+                if (!ObjectId.isValid(ideaId)) {
+                    return res.status(400).json({
+                        message: "Invalid idea ID"
+                    });
+                }
+
+                if (typeof text !== "string" || !text.trim()) {
+                    return res.status(400).json({
+                        message: "Comment text is required"
+                    });
+                }
+
+                const comment = {
+                    userId,
+                    ideaId: new ObjectId(ideaId),
+                    parentId: null,
+                    user,
+                    avatar,
+                    text: text.trim(),
+                    likes: 0,
+                    createdAt: new Date()
+                };
+
+                const result = await commentsCollection.insertOne(comment);
+
+                await ideasCollection.updateOne(
+                    {
+                        userId,
+                        _id: new ObjectId(ideaId)
+                    },
+                    {
+                        $inc: {
+                            comments: 1
+                        }
+                    }
+                );
+
+                res.status(201).json({
+                    message: "Comment created successfully",
+                    comment: {
+                        ...comment,
+                        _id: result.insertedId
+                    }
+                });
+
+            } catch (error) {
+                res.status(500).json({
+                    message: "Failed to create comment"
+                });
+            }
+        });
+
+        // Create a Reply
+        app.post("/ideas/:ideaId/comments/:parentId/replies/:userId", async (req, res) => {
+            try {
+                const { ideaId, parentId, userId } = req.params;
+                const { text, user, avatar } = req.body;
+
+                if (!ObjectId.isValid(ideaId) || !ObjectId.isValid(parentId)) {
+                    return res.status(400).json({
+                        message: "Invalid ID"
+                    });
+                }
+
+                if (typeof text !== "string" || !text.trim()) {
+                    return res.status(400).json({
+                        message: "Reply text is required"
+                    });
+                };
+
+                const ideaObjectId = new ObjectId(ideaId);
+                const parentObjectId = new ObjectId(parentId);
+
+                // Check parent comment exists under this idea
+                const parentComment = await commentsCollection.findOne({
+                    _id: parentObjectId,
+                    ideaId: ideaObjectId
+                });
+
+                if (!parentComment) {
+                    return res.status(404).json({
+                        message: "Parent comment not found"
+                    });
+                }
+
+                const reply = {
+                    ideaId: ideaObjectId,
+                    parentId: parentObjectId,
+                    userId,
+                    user,
+                    avatar,
+                    text: text.trim(),
+                    likes: 0,
+                    createdAt: new Date()
+                };
+
+                const result = await commentsCollection.insertOne(reply);
+
+                await ideasCollection.updateOne(
+                    {
+                        userId,
+                        _id: new ObjectId(ideaId)
+                    },
+                    {
+                        $inc: {
+                            comments: 1
+                        }
+                    }
+                );
+
+                res.status(201).json({
+                    message: "Reply created successfully",
+                    reply: {
+                        ...reply,
+                        _id: result.insertedId
+                    }
+                });
+
+            } catch (error) {
+                res.status(500).json({
+                    message: "Failed to create reply"
+                });
+            }
+        });
+
 
         // UPDATE request
+
         app.patch('/my-ideas/:ideaId', async (req, res) => {
             const { ideaId } = req.params;
             const modifiedIdeaInfo = await req.body;
@@ -152,6 +399,7 @@ const connectToMongoDB = async () => {
             res.send(result);
         });
 
+        // update idea and create vote
         app.patch("/idea-details/:detailsId", async (req, res) => {
             const { detailsId } = req.params;
             const votesInfo = await req.body;
@@ -193,7 +441,7 @@ const connectToMongoDB = async () => {
 
                     if (isLiked) {
                         // Insert only if this user hasn't voted
-                        const insertResult = await votesCollection.updateOne(
+                        const insertResult = await votesOnIdeaCollection.updateOne(
                             voteQuery,
                             {
                                 $setOnInsert: {
@@ -217,7 +465,7 @@ const connectToMongoDB = async () => {
 
                     } else {
                         // Delete existing vote
-                        const deleteResult = await votesCollection.deleteOne(
+                        const deleteResult = await votesOnIdeaCollection.deleteOne(
                             voteQuery,
                             { session }
                         );
@@ -265,8 +513,170 @@ const connectToMongoDB = async () => {
             }
         });
 
+        // update comment in comments collection and create vote in vote-on-comment collection
+        app.patch("/idea/:detailsId/comment/:commentId/liked", async (req, res) => {
+            const { detailsId, commentId } = req.params;
+            const votesInfo = await req.body;
+            const { isLiked, userId, text, title } = votesInfo;
+
+            if (!ObjectId.isValid(detailsId)) {
+                return res.status(400).json({
+                    message: "Invalid idea ID"
+                });
+            };
+
+            if (!ObjectId.isValid(commentId)) {
+                return res.status(400).json({
+                    message: "Invalid comment ID"
+                });
+            };
+
+            if (!userId) {
+                return res.status(401).json({
+                    message: "Unauthorized"
+                });
+            };
+
+            if (typeof isLiked !== "boolean") {
+                return res.status(400).json({
+                    message: "isLiked must be a boolean"
+                });
+            };
+
+            const ideaId = new ObjectId(detailsId);
+            const session = client.startSession();
+
+            try {
+                const result = await session.withTransaction(async () => {
+                    const idea = await ideasCollection.findOne(
+                        { _id: ideaId },
+                        { session }
+                    );
+
+                    if (!idea) {
+                        throw new Error("IDEA_NOT_FOUND");
+                    };
+
+                    const comment = await commentsCollection.findOne(
+                        { _id: new ObjectId(commentId) },
+                        { session }
+                    );
+
+                    if (!comment) {
+                        throw new Error("COMMENT_NOT_FOUND");
+                    };
+
+                    const voteQuery = { ideaId, userId, commentId: new ObjectId(commentId) };
+
+                    if (isLiked) {
+                        // Insert only if this user hasn't voted
+                        const insertResult = await votesOnCommentCollection.updateOne(
+                            voteQuery,
+                            {
+                                $setOnInsert: {
+                                    ideaId,
+                                    userId,
+                                    commentId: new ObjectId(commentId),
+                                    title,
+                                    text,
+                                    createdAt: new Date()
+                                }
+                            },
+                            { upsert: true, session }
+                        );
+
+                        if (insertResult.upsertedCount === 1) {
+                            await commentsCollection.updateOne(
+                                {
+                                    _id: new ObjectId(commentId),
+                                    ideaId
+                                },
+                                { $inc: { likes: 1 } },
+                                { session }
+                            );
+                        }
+
+                    } else {
+                        // Delete existing vote
+                        const deleteResult = await votesOnCommentCollection.deleteOne(
+                            voteQuery,
+                            { session }
+                        );
+
+                        if (deleteResult.deletedCount === 1) {
+                            await commentsCollection.updateOne(
+                                {
+                                    _id: new ObjectId(commentId),
+                                    ideaId
+                                },
+                                { $inc: { likes: -1 } },
+                                { session }
+                            );
+                        };
+                    };
+
+                    const updatedComment = await commentsCollection.findOne(
+                        {
+                            _id: new ObjectId(commentId),
+                            ideaId
+                        },
+                        { session }
+                    );
+
+                    return {
+                        likes: updatedComment.likes,
+                        isLiked
+                    };
+                });
+
+                res.status(200).json({
+                    message: "Idea published successfully",
+                    ...result
+                });
+
+            } catch (error) {
+                console.error(error);
+
+                if (error.message === "IDEA_NOT_FOUND") {
+                    return res.status(404).json({
+                        message: "Idea not found"
+                    });
+                }
+
+                res.status(500).json({
+                    message: "Failed to publish idea"
+                });
+
+            } finally {
+                await session.endSession();
+            }
+        });
+
+        app.patch('/idea/:detailsId/comment/:commentId', async (req, res) => {
+            const { detailsId, commentId } = req.params;
+            const { text, userId } = await req.body;
+
+            const filter = {
+                _id: new ObjectId(commentId),
+                ideaId: new ObjectId(detailsId),
+                userId
+            };
+
+            const updateDoc = {
+                $set: {
+                    text,
+                    createdAt: new Date()
+                }
+            };
+
+            const result = await commentsCollection.updateOne(filter, updateDoc);
+
+            res.send(result);
+        });
+
 
         // DELETE request
+
         app.delete('/my-ideas/:ideaId', async (req, res) => {
             const { ideaId } = req.params;
 
@@ -275,6 +685,20 @@ const connectToMongoDB = async () => {
             };
 
             const result = await ideasCollection.deleteOne(filter);
+
+            res.send(result);
+        });
+
+        app.delete('/idea/:detailsId/comment/:commentId/user/:userId', async (req, res) => {
+            const { detailsId, commentId, userId } = req.params;
+
+            const filter = {
+                _id: new ObjectId(commentId),
+                ideaId: new ObjectId(detailsId),
+                userId
+            };
+
+            const result = await commentsCollection.deleteOne(filter);
 
             res.send(result);
         });
