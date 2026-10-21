@@ -54,7 +54,7 @@ const client = new MongoClient(mongoConnectionURI);
 
 const connectToMongoDB = async () => {
     try {
-        // await client.connect();
+        await client.connect();
         console.log('You successfully connected to MongoDB');
 
         const database = client.db('IdeaVault');
@@ -62,19 +62,7 @@ const connectToMongoDB = async () => {
         const votesOnIdeaCollection = database.collection('votes-on-idea');
         const commentsCollection = database.collection('comments');
         const votesOnCommentCollection = database.collection('votes-on-comment');
-
-        // Create indexes
-        await commentsCollection.createIndex({
-            ideaId: 1,
-            createdAt: 1,
-            _id: 1
-        });
-
-        await commentsCollection.createIndex({
-            parentId: 1
-        });
-
-        console.log("MongoDB indexes created successfully");
+        const userCollection = database.collection('user');
 
         // API Routes
 
@@ -180,24 +168,6 @@ const connectToMongoDB = async () => {
             };
         });
 
-        app.get('/idea/:detailsId/comment/:commentId/liked/:userId', async (req, res) => {
-            const { detailsId, userId, commentId } = req.params;
-
-            const query = {
-                ideaId: new ObjectId(detailsId),
-                commentId: new ObjectId(commentId),
-                userId
-            };
-
-            const result = await votesOnCommentCollection.findOne(query);
-
-            if (result) {
-                res.status(200).json({ message: true });
-            } else {
-                res.status(404).json({ message: false });
-            };
-        })
-
         app.get('/my-ideas/:userId', async (req, res) => {
             const { userId } = req.params;
             const query = {
@@ -237,6 +207,26 @@ const connectToMongoDB = async () => {
             }
         });
 
+        app.get('/my-interactions/comments/:userId', async (req, res) => {
+            const { userId } = req.params;
+
+            const cursor = commentsCollection.find({ userId });
+            const result = await cursor.toArray();
+
+            res.send(result);
+        });
+
+        app.get('/my-interactions/likes/:userId', async (req, res) => {
+            const { userId } = req.params;
+
+            const coll_1 = await votesOnCommentCollection.find({ userId }).toArray();
+            const coll_2 = await votesOnIdeaCollection.find({ userId }).toArray();
+
+            const result = [...coll_1, ...coll_2];
+
+            res.send(result);
+        });
+
 
         // POST request
         app.post('/add-idea', async (req, res) => {
@@ -250,7 +240,7 @@ const connectToMongoDB = async () => {
         app.post("/ideas/:ideaId/comments/:userId", async (req, res) => {
             try {
                 const { ideaId, userId } = req.params;
-                const { text, user, avatar } = await req.body;
+                const { text, user, avatar, title } = await req.body;
 
                 if (!ObjectId.isValid(ideaId)) {
                     return res.status(400).json({
@@ -271,6 +261,7 @@ const connectToMongoDB = async () => {
                     user,
                     avatar,
                     text: text.trim(),
+                    title,
                     likes: 0,
                     createdAt: new Date()
                 };
@@ -308,7 +299,7 @@ const connectToMongoDB = async () => {
         app.post("/ideas/:ideaId/comments/:parentId/replies/:userId", async (req, res) => {
             try {
                 const { ideaId, parentId, userId } = req.params;
-                const { text, user, avatar } = req.body;
+                const { text, user, avatar, title } = req.body;
 
                 if (!ObjectId.isValid(ideaId) || !ObjectId.isValid(parentId)) {
                     return res.status(400).json({
@@ -344,6 +335,7 @@ const connectToMongoDB = async () => {
                     user,
                     avatar,
                     text: text.trim(),
+                    title,
                     likes: 0,
                     createdAt: new Date()
                 };
@@ -517,7 +509,7 @@ const connectToMongoDB = async () => {
         app.patch("/idea/:detailsId/comment/:commentId/liked", async (req, res) => {
             const { detailsId, commentId } = req.params;
             const votesInfo = await req.body;
-            const { isLiked, userId, text, title } = votesInfo;
+            const { isLiked, userId, shortDesc, title } = votesInfo;
 
             if (!ObjectId.isValid(detailsId)) {
                 return res.status(400).json({
@@ -578,7 +570,7 @@ const connectToMongoDB = async () => {
                                     userId,
                                     commentId: new ObjectId(commentId),
                                     title,
-                                    text,
+                                    shortDesc,
                                     createdAt: new Date()
                                 }
                             },
@@ -670,6 +662,27 @@ const connectToMongoDB = async () => {
             };
 
             const result = await commentsCollection.updateOne(filter, updateDoc);
+
+            res.send(result);
+        });
+
+        app.patch('/profile/edit/:userId', async (req, res) => {
+            const { userId } = req.params;
+            const {name, image} = await req.body;
+            console.log({name, image})
+
+            const filter = {
+                _id: new ObjectId(userId)
+            };
+
+            const updateDoc = {
+                $set: {
+                    name,
+                    image
+                }
+            };
+
+            const result = await userCollection.updateOne(filter, updateDoc);
 
             res.send(result);
         });
