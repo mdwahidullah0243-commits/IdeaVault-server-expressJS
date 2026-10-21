@@ -303,7 +303,6 @@ const connectToMongoDB = async () => {
 
                 await ideasCollection.updateOne(
                     {
-                        userId,
                         _id: new ObjectId(ideaId)
                     },
                     {
@@ -377,7 +376,6 @@ const connectToMongoDB = async () => {
 
                 await ideasCollection.updateOne(
                     {
-                        userId,
                         _id: new ObjectId(ideaId)
                     },
                     {
